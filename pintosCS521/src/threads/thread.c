@@ -11,6 +11,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "lib/kernel/list.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -208,6 +209,10 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+  if (thread_current()->priority < t->priority)
+  {
+    thread_yield ();
+  }
 
   return tid;
 }
@@ -245,7 +250,8 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  list_insert_ordered (&ready_list, &t->elem,
+                      (list_less_func *) &thread_priority_comparator, NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -316,7 +322,8 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    list_insert_ordered (&ready_list, &cur->elem,
+                        (list_less_func *) &thread_priority_comparator, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -339,11 +346,35 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
+void
+thread_check_waited_time (struct thread *t, void *aux UNUSED)
+{
+  if (t->status == THREAD_BLOCKED && t->wake_up_time > 0) {
+    t->waited_time += 1;
+    if(t->waited_time == t->wake_up_time) {
+      t->wake_up_time = 0;
+      t->waited_time = 0;
+      thread_unblock(t);
+    }
+  }
+}
+
+/* comparation function */
+bool
+thread_priority_comparator (const struct list_elem *e1, 
+                            const struct list_elem *e2, void *aux UNUSED)
+{
+  struct thread *t1 = list_entry (e1, struct thread, elem);
+  struct thread *t2 = list_entry (e2, struct thread, elem);
+  return t1->priority > t2->priority;
+}
+
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
+  thread_yield ();
 }
 
 /* Returns the current thread's priority. */
@@ -469,7 +500,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
-  list_push_back (&all_list, &t->allelem);
+  t->wake_up_time = 0;
+  t->waited_time = 0;
+  list_insert_ordered (&all_list, &t->allelem,
+                      (list_less_func *) &thread_priority_comparator, NULL);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and

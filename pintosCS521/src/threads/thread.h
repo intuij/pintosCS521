@@ -100,6 +100,9 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+    /*for sleep_time*/
+    uint64_t wake_up_time;
+    uint64_t waited_time;
   };
 
 /* If false (default), use round-robin scheduler.
@@ -129,6 +132,10 @@ void thread_yield (void);
 /* Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);
 void thread_foreach (thread_action_func *, void *);
+void thread_check_waited_time (struct thread *t, void *aux UNUSED);
+bool thread_priority_comparator (const struct list_elem *e1, 
+                                 const struct list_elem *e2, 
+                                 void *aux UNUSED);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
