@@ -322,8 +322,12 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
+  {
+    list_sort (&ready_list, (list_less_func *) &thread_priority_comparator,
+               NULL);
     list_insert_ordered (&ready_list, &cur->elem,
                         (list_less_func *) &thread_priority_comparator, NULL);
+  }
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -373,8 +377,19 @@ thread_priority_comparator (const struct list_elem *e1,
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
-  thread_yield ();
+  if (thread_mlfqs)
+    return;
+
+  enum intr_level old_level = intr_disable ();
+  struct thread *cur = thread_current ();
+  cur->origin_priority = new_priority;
+  int pre = cur->priority;
+  if (list_empty (&cur->locks) || new_priority > pre)
+  {
+    cur->priority = new_priority;
+    thread_yield ();
+  }
+  intr_set_level (old_level);
 }
 
 /* Returns the current thread's priority. */
@@ -384,6 +399,48 @@ thread_get_priority (void)
   return thread_current ()->priority;
 }
 
+/* set a new priority to thread t when it releases a lock */
+void
+thread_new_priority (struct thread *t)
+{
+  int max = t->origin_priority;
+  enum intr_level old_level = intr_disable ();
+
+  if (!list_empty (&t->locks))
+  {
+    list_sort (&t->locks, (list_less_func *) &lock_highest_priority_comparator, NULL);
+    //assign the largest priority of all locks hold in list locks to this thread */
+    int max_priority_in_list = list_entry (list_front (&t->locks), struct lock, elem)
+                               ->highest_priority;
+    if (max_priority_in_list > max) 
+    {
+      max = max_priority_in_list;
+    }
+  }
+  t->priority = max;
+  intr_set_level (old_level);
+}
+
+void
+thread_donate_priority (struct thread *t)
+{
+  enum intr_level old_level = intr_disable ();
+  thread_new_priority (t);
+  if (t->status == THREAD_READY)
+  {     
+    list_sort (&ready_list, (list_less_func *) &thread_priority_comparator, NULL);
+  }
+  intr_set_level (old_level);
+}
+
+bool
+lock_highest_priority_comparator (const struct list_elem *e1,
+                                  const struct list_elem *e2,
+                                  void *aux UNUSED)
+{
+  return list_entry (e1, struct lock, elem)->highest_priority > 
+         list_entry (e2, struct lock, elem)->highest_priority;
+}
 /* Sets the current thread's nice value to NICE. */
 void
 thread_set_nice (int nice UNUSED) 
@@ -499,9 +556,13 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+  t->origin_priority = priority;
+  list_init (&t->locks);
+  t->lock = NULL;
   t->magic = THREAD_MAGIC;
   t->wake_up_time = 0;
   t->waited_time = 0;
+  /* insert this thread in approprite position(priority high->low) */
   list_insert_ordered (&all_list, &t->allelem,
                       (list_less_func *) &thread_priority_comparator, NULL);
 }
@@ -529,8 +590,8 @@ next_thread_to_run (void)
 {
   if (list_empty (&ready_list))
     return idle_thread;
-  else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+  
+  return list_entry (list_pop_front (&ready_list), struct thread, elem);
 }
 
 /* Completes a thread switch by activating the new thread's page
