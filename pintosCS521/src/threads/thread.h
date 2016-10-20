@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "fixed_point.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -94,6 +95,8 @@ struct thread
     struct lock *lock;                  /* lock this thread is waiting for */
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
+    int nice;                           /* Nice value of thread. */
+    fixed_t recent_cpu;                 /* recent_cpu value. */
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -146,6 +149,10 @@ void thread_donate_priority (struct thread *);
 bool lock_highest_priority_comparator (const struct list_elem *e1,
                                   const struct list_elem *e2,
                                   void *aux UNUSED);
+void thread_mlfqs_update_loadavg_and_recent_cpu (void);
+void thread_mlfqs_new_priority (struct thread *);
+void calculate_recent_cpu(struct thread *);
+void calculate_priority(struct thread *);
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
